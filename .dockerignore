@@ -1,0 +1,10 @@
+.git
+.agents
+.codex
+target
+results
+__pycache__
+*.sqlite*
+*.log
+*.tar
+*.tar.gz

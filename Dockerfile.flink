@@ -1,0 +1,2 @@
+FROM apache/fluss-quickstart-flink:1.20-1.0.0
+COPY scripts/run-sql.sh /opt/lab/run-sql.sh

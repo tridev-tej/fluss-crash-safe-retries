@@ -1,0 +1,17 @@
+Crash-safe retries lab
+Copyright 2026 Tejesh Vaish
+
+This author-owned example is licensed under Apache License 2.0. It is not an
+official Apache Fluss release or an Apache Software Foundation distribution.
+
+The Compose topology and Flink catalog examples adapt the Apache Fluss 1.0
+Docker deployment and Flink quickstart documentation, published by the Apache
+Software Foundation under Apache License 2.0:
+https://fluss.apache.org/docs/install-deploy/deploying-with-docker/
+https://fluss.apache.org/docs/quickstart/flink/
+
+Apache Fluss, Apache Flink and Apache ZooKeeper are trademarks of the Apache
+Software Foundation. Their source and binary distributions retain their own
+licenses and notices. Maven dependencies and container images are fetched from
+their upstream distributions; no third-party binaries are committed here.
+The build's shaded JAR is a local execution artifact, not a published release.

@@ -1,0 +1,172 @@
+services:
+  zookeeper:
+    image: zookeeper:3.9.2
+    mem_limit: 512m
+    cpus: 0.10
+    environment:
+      JVMFLAGS: -Xms64m -Xmx192m -XX:ActiveProcessorCount=2
+      ZOO_4LW_COMMANDS_WHITELIST: srvr
+    volumes:
+      - zk-data:/data
+      - zk-log:/datalog
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /usr/bin/timeout 3s bash -o pipefail -c
+          'printf srvr | /usr/bin/nc -w 2 127.0.0.1 2181 |
+          grep -E "^Mode: standalone$$" > /dev/null'
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  coordinator-server:
+    image: apache/fluss:1.0.0
+    command: coordinatorServer
+    mem_limit: 1024m
+    cpus: 0.25
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx512m -XX:MaxDirectMemorySize=256m -XX:ActiveProcessorCount=2
+      FLUSS_PROPERTIES: |
+        zookeeper.address: zookeeper:2181
+        bind.listeners: INTERNAL://coordinator-server:0, CLIENT://coordinator-server:9123
+        advertised.listeners: CLIENT://coordinator-server:9123
+        internal.listener.name: INTERNAL
+        default.replication.factor: 1
+        log.replica.min-in-sync-replicas-number: 1
+        remote.data.dir: /var/lib/fluss/remote-data
+    volumes:
+      - remote-data:/var/lib/fluss/remote-data
+    healthcheck:
+      test: [CMD-SHELL, "bash -c 'echo > /dev/tcp/coordinator-server/9123'"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  tablet-server:
+    image: apache/fluss:1.0.0
+    command: tabletServer
+    mem_limit: 2048m
+    cpus: 0.55
+    depends_on:
+      coordinator-server:
+        condition: service_healthy
+    environment:
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx768m -XX:MaxDirectMemorySize=512m -XX:ActiveProcessorCount=2
+      FLUSS_PROPERTIES: |
+        zookeeper.address: zookeeper:2181
+        bind.listeners: INTERNAL://tablet-server:0, CLIENT://tablet-server:9123
+        advertised.listeners: CLIENT://tablet-server:9123
+        internal.listener.name: INTERNAL
+        tablet-server.id: 0
+        default.replication.factor: 1
+        log.replica.min-in-sync-replicas-number: 1
+        data.dir: /var/lib/fluss/data
+        remote.data.dir: /var/lib/fluss/remote-data
+        kv.snapshot.interval: 2s
+    volumes:
+      - tablet-data:/var/lib/fluss/data
+      - remote-data:/var/lib/fluss/remote-data
+    healthcheck:
+      test: [CMD-SHELL, "bash -c 'echo > /dev/tcp/tablet-server/9123'"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${COMPOSE_PROJECT_NAME:?Set a unique COMPOSE_PROJECT_NAME}-runner:1.0.0
+    profiles: [tools]
+    mem_limit: 1024m
+    cpus: 0.35
+    environment:
+      LAB_RUN_ID: ${LAB_RUN_ID:-compose-01}
+      JAVA_TOOL_OPTIONS: -Xms64m -Xmx384m -XX:MaxDirectMemorySize=128m -XX:ActiveProcessorCount=2
+    depends_on:
+      tablet-server:
+        condition: service_healthy
+    volumes:
+      - evidence:/evidence
+
+  jobmanager:
+    image: apache/fluss-quickstart-flink:1.20-1.0.0
+    user: '0:0'
+    profiles: [sql]
+    command: jobmanager
+    mem_limit: 1024m
+    cpus: 0.25
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        rest.address: jobmanager
+        jobmanager.memory.process.size: 768m
+        web.history: 100
+        parallelism.default: 1
+        env.java.opts.jobmanager: -XX:ActiveProcessorCount=2
+    volumes:
+      - remote-data:/var/lib/fluss/remote-data
+      - evidence:/evidence
+    healthcheck:
+      test: [CMD-SHELL, "bash -c 'echo > /dev/tcp/127.0.0.1/8081'"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  taskmanager:
+    image: apache/fluss-quickstart-flink:1.20-1.0.0
+    user: '0:0'
+    profiles: [sql]
+    command: taskmanager
+    mem_limit: 1536m
+    cpus: 0.40
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 1
+        taskmanager.memory.process.size: 1280m
+        parallelism.default: 1
+        env.java.opts.taskmanager: -XX:ActiveProcessorCount=2
+    volumes:
+      - remote-data:/var/lib/fluss/remote-data
+      - evidence:/evidence
+
+  sql-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.flink
+    image: ${COMPOSE_PROJECT_NAME:?Set a unique COMPOSE_PROJECT_NAME}-sql:1.0.0
+    user: '0:0'
+    profiles: [sql]
+    command: [bash, /opt/lab/run-sql.sh]
+    mem_limit: 512m
+    cpus: 0.10
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+      taskmanager:
+        condition: service_started
+    environment:
+      LAB_RUN_ID: ${LAB_RUN_ID:-compose-01}
+      JAVA_TOOL_OPTIONS: -Xms32m -Xmx256m -XX:ActiveProcessorCount=2
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        rest.address: jobmanager
+        parallelism.default: 1
+    volumes:
+      - remote-data:/var/lib/fluss/remote-data
+      - evidence:/evidence
+
+volumes:
+  zk-data:
+  zk-log:
+  tablet-data:
+  remote-data:
+  evidence:
